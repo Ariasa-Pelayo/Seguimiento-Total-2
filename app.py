@@ -3,16 +3,15 @@ import pandas as pd
 import glob
 import os
 
-# 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser la primera instrucción de Streamlit)
+# 1. CONFIGURACIÓN DE LA PÁGINA
 st.set_page_config(page_title="Control de Avance", layout="wide")
 
 st.title("📊 Dashboard de Avance de Proyectos")
 st.subheader("Información consolidada de múltiples fuentes de Excel")
 
 # 2. FUNCIÓN PARA CARGAR, LIMPIAR Y CONSOLIDAR LOS EXCEL
-@st.cache_data # Optimiza la app para que no lea los Excel en cada clic
+@st.cache_data
 def cargar_datos():
-    # Busca todos los archivos .xlsx en la carpeta actual del repositorio
     archivos_excel = glob.glob("*.xlsx") 
     
     if not archivos_excel:
@@ -20,48 +19,59 @@ def cargar_datos():
 
     lista_df = []
     for archivo in archivos_excel:
-        # Leer el archivo Excel actual
         df = pd.read_excel(archivo)
         
-        # CORRECCIÓN DE COLUMNAS DUPLICADAS:
-        # Borra espacios fantasmas a los lados y pone la primera letra en mayúscula.
-        # Esto unifica 'tarea', 'Tarea ' y 'TAREA' en una sola columna 'Tarea'.
+        # Limpieza de columnas para evitar duplicados
         df.columns = df.columns.str.strip().str.capitalize()
         
-        # Guardamos el nombre del archivo de origen para saber de quién viene
         df['Origen'] = os.path.basename(archivo)
         lista_df.append(df)
     
-    # Consolidamos todos los archivos Excel en un único DataFrame de Pandas
     df_final = pd.concat(lista_df, ignore_index=True)
     
-    # CORRECCIÓN DE PORCENTAJE BAJO:
-    # Si el promedio es menor o igual a 1.0, Excel guardó los datos como decimales (ej: 0.50 en vez de 50).
-    # Multiplicamos toda la columna por 100 para estandarizar a base 100.
+    # Corrección automática si Excel guardó los porcentajes como decimales (0.5 en vez de 50)
     if df_final['Porcentaje'].mean() <= 1.0:
         df_final['Porcentaje'] = df_final['Porcentaje'] * 100
         
     return df_final
 
-# Ejecutamos la función de carga de datos
 df = cargar_datos()
 
-# 3. CONSTRUCCIÓN DE LA INTERFAZ SI EXISTEN DATOS
+# 3. CONSTRUCCIÓN DE LA INTERFAZ
 if df is not None:
     
-    # --- MÉTRICAS GENERALES (CORREGIDO CON LA OPCIÓN A) ---
-    # Paso 1: Calculamos el progreso promedio real de cada trabajador de forma individual
-    progreso_por_persona = df['Porcentaje'].groupby(df['Responsable']).mean()
+    # -----------------------------------------------------------------
+    # >>> NUEVA LÓGICA: AVANCE REAL POR CHECKLIST DE TAREAS <<<
+    # -----------------------------------------------------------------
+    total_tareas_proyecto = len(df)
     
-    # Paso 2: Promediamos los totales de cada uno para obtener el avance equitativo del proyecto
-    avance_general = progreso_por_persona.mean()
+    # Contamos cuántas filas tienen el progreso al 100%
+    tareas_completadas = len(df[df['Porcentaje'] >= 100])
     
-    # Mostramos las tarjetas con los resultados correctos en la pantalla
-    col1, col2 = st.columns(2)
+    # Calculamos el porcentaje real del proyecto
+    if total_tareas_proyecto > 0:
+        avance_real_proyecto = (tareas_completadas / total_tareas_proyecto) * 100
+    else:
+        avance_real_proyecto = 0.0
+    
+    # Mostramos las tarjetas con la nueva lógica intuitiva
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric(label="Progreso Total del Proyecto (Promedio Equipo)", value=f"{avance_general:.2f}%")
+        st.metric(
+            label="Progreso Real del Proyecto", 
+            value=f"{avance_real_proyecto:.2f}%",
+            help="Porcentaje de tareas totales que ya están al 100%"
+        )
     with col2:
-        st.metric(label="Total de Integrantes", value=df['Responsable'].nunique())
+        st.metric(
+            label="Tareas Listas", 
+            value=f"{tareas_completadas} / {total_tareas_proyecto}"
+        )
+    with col3:
+        st.metric(
+            label="Total de Integrantes", 
+            value=df['Responsable'].nunique()
+        )
 
     st.markdown("---")
 
@@ -73,22 +83,17 @@ if df is not None:
         default=df['Responsable'].unique()
     )
     
-    # Filtrar el dataframe según la selección del usuario
     df_filtrado = df[df['Responsable'].isin(usuarios)]
 
-    # 5. GRÁFICO DE BARRAS
-    st.write("### 👥 Avance por Integrante")
-    
-    # Agrupamos los datos filtrados para mostrar el avance individual de cada persona seleccionada
+    # 5. GRÁFICO DE BARRAS (Muestra el promedio de avance que lleva cada uno)
+    st.write("### 👥 Avance Promedio por Integrante")
     avance_grafico = df_filtrado.groupby('Responsable')['Porcentaje'].mean().reset_index()
-    
-    # Dibujar gráfico de barras nativo de Streamlit
     st.bar_chart(data=avance_grafico, x='Responsable', y='Porcentaje')
 
-    # 6. TABLA DE DATOS DETALLADA (Limpia y sin columnas duplicadas)
+    # 6. TABLA DE DATOS DETALLADA
     st.write("### 📄 Detalle de las Tareas")
     st.dataframe(df_filtrado, use_container_width=True)
 
 else:
-    # Mensaje de aviso en caso de que no haya archivos en el repositorio de GitHub
     st.warning("⚠️ No se encontraron archivos de Excel (.xlsx) en el repositorio. Sube tus archivos para activar el Dashboard.")
+    
